@@ -1,0 +1,342 @@
+################################################################################################################################
+(1)single_image_discrete
+################################################################################################################################
+# ! conda install python=3.8
+
+# ! pip install mxnet==1.9.1
+# ! pip install gluoncv (==0.10.5.post0)
+# ! pip install numpy==1.20.0
+# ! pip install pandas==1.4.4
+# ! pip install folium
+# ! pip install geopandas
+################################################################################################################################
+import mxnet as mx
+from mxnet import image, gpu
+
+import gluoncv
+from gluoncv.data.transforms.presets.segmentation import test_transform
+from gluoncv.utils.viz import get_color_pallete, plot_image
+
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import pandas as pd
+
+import warnings
+warnings.filterwarnings(action='once')
+warnings.filterwarnings("ignore")
+################################################################################################################################
+# 定义CityScapes数据集的分割标签字典
+col_map = {0:'road', 
+           1:'sidewalk', 
+           2:'building', 
+           3:'wall', 
+           4:'fence', 
+           5:'pole',  # 杆
+           6:'traffic light', 
+           7:'traffic sign', 
+           8:'vegetation',  # 植被
+           9:'terrain',  # 高地
+           10:'sky', 
+           11:'person', 
+           12:'rider', 
+           13:'car', 
+           14:'truck', 
+           15:'bus', 
+           16:'train', 
+           17:'motorcycle', 
+           18:'bicycle'}
+################################################################################################################################
+ctx = mx.cpu()
+model = gluoncv.model_zoo.get_model('psp_resnet101_citys', ctx=ctx, pretrained=True)
+################################################################################################################################
+img_path = r'3.jpg'
+
+img = image.imread(img_path)
+img = test_transform(img, ctx=ctx)
+print(img)  # 1x3x630x630
+
+output = model.predict(img)
+print(output)  # 1x19x630x630
+
+predict = mx.nd.squeeze(mx.nd.argmax(output, 1)).asnumpy()
+print(predict)  # 630x630
+
+# .shape
+################################################################################################################################
+mask = get_color_pallete(predict, 'citys')
+print(mask)
+
+base = mpimg.imread(img_path)
+# print(base)  # 630x630x3
+
+plt.figure(figsize=(10, 5))
+plt.imshow(base)
+plt.imshow(mask, alpha=0.5)
+plt.axis('off')
+plt.savefig("3", dpi=150, bbox_inches='tight')
+################################################################################################################################
+lis = []
+
+row = predict.shape[0]
+# print(row)  # 630
+col = predict.shape[1]
+# print(col)  # 630
+
+for i in range(row) :
+    for j in range(col) :
+        lis.append(predict[i][j])
+# print(lis)  # =[630x630]
+
+uni_lis = list(set(lis))  # 创建无序不重复元素集
+# print(uni_lis)
+
+for i in uni_lis :
+    print(col_map[i], end='  ')
+################################################################################################################################
+pred = []
+
+for i in range(19) :
+    # (predict==i)==array
+    # (predict[predict==i])==vector
+    pred.append(( len(predict[predict==i]) / (predict.shape[0]*predict.shape[1]) ))
+
+print(pred)
+pred = pd.Series(pred).rename(col_map)
+print(pred)
+print(sum(pred))
+################################################################################################################################
+final_result = [0]*4
+
+final_result[0] = pred['road'] + pred['sidewalk'] + pred['terrain']  # ground
+final_result[1] = pred['building'] + pred['wall'] + pred['fence']  # architecture
+final_result[2] = pred['sky']  # sky
+final_result[3] = pred['vegetation']  # plants
+print(sum(final_result))
+
+final_result = final_result/sum(final_result)
+print(final_result)
+################################################################################################################################
+################################################################################################################################
+(2)single_image_function
+################################################################################################################################
+# ! conda install python=3.8
+
+# ! pip install mxnet==1.9.1
+# ! pip install gluoncv (==0.10.5.post0)
+# ! pip install numpy==1.20.0
+# ! pip install pandas==1.4.4
+# ! pip install folium
+# ! pip install geopandas
+################################################################################################################################
+import mxnet as mx
+from mxnet import image, gpu
+
+import gluoncv
+from gluoncv.data.transforms.presets.segmentation import test_transform
+from gluoncv.utils.viz import get_color_pallete, plot_image
+
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import pandas as pd
+
+import warnings
+warnings.filterwarnings(action='once')
+warnings.filterwarnings("ignore")
+################################################################################################################################
+# 定义CityScapes数据集的分割标签字典
+col_map = {0:'road', 
+           1:'sidewalk', 
+           2:'building', 
+           3:'wall', 
+           4:'fence', 
+           5:'pole',  # 杆
+           6:'traffic light', 
+           7:'traffic sign', 
+           8:'vegetation',  # 植被
+           9:'terrain',  # 高地
+           10:'sky', 
+           11:'person', 
+           12:'rider', 
+           13:'car', 
+           14:'truck', 
+           15:'bus', 
+           16:'train', 
+           17:'motorcycle', 
+           18:'bicycle'}
+################################################################################################################################
+def img_seg(img, model) :
+
+    img = image.imread(img)
+    img = test_transform(img, ctx=ctx)  # 1x3x630x630
+    output = model.predict(img)  # 1x19x630x630
+    predict = mx.nd.squeeze(mx.nd.argmax(output, 1)).asnumpy()  # 630x630
+
+    pred = []
+    for i in range(19) :
+        # (predict==i)==array
+        # (predict[predict==i])==vector
+        pred.append(( len(predict[predict==i]) / (predict.shape[0]*predict.shape[1]) ))
+    pred = pd.Series(pred).rename(col_map)
+
+    final_result = [0]*4
+    final_result[0] = pred['road'] + pred['sidewalk'] + pred['terrain']  # ground
+    final_result[1] = pred['building'] + pred['wall'] + pred['fence']  # architecture
+    final_result[2] = pred['sky']  # sky
+    final_result[3] = pred['vegetation']  # plants
+    final_result = final_result/sum(final_result)
+
+    return pred, final_result
+################################################################################################################################
+ctx = mx.cpu()
+model = gluoncv.model_zoo.get_model('psp_resnet101_citys', ctx=ctx, pretrained=True)
+################################################################################################################################
+pred_test, result_test = img_seg(r'1.jpg', model)
+print(pred_test)
+print(result_test)
+################################################################################################################################
+################################################################################################################################
+(3)multi_images
+################################################################################################################################
+# ! conda install python=3.8
+
+# ! pip install mxnet==1.9.1
+# ! pip install gluoncv (==0.10.5.post0)
+# ! pip install numpy==1.20.0
+# ! pip install pandas==1.4.4
+# ! pip install folium
+# ! pip install geopandas
+################################################################################################################################
+import mxnet as mx
+from mxnet import image, gpu
+
+import gluoncv
+from gluoncv.data.transforms.presets.segmentation import test_transform
+from gluoncv.utils.viz import get_color_pallete, plot_image
+
+import copy
+import folium
+from folium.plugins import HeatMap
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import pandas as pd
+
+import warnings
+warnings.filterwarnings(action='once')
+warnings.filterwarnings("ignore")
+################################################################################################################################
+# 定义CityScapes数据集的分割标签字典
+col_map = {0:'road', 
+           1:'sidewalk', 
+           2:'building', 
+           3:'wall', 
+           4:'fence', 
+           5:'pole',  # 杆
+           6:'traffic light', 
+           7:'traffic sign', 
+           8:'vegetation',  # 植被
+           9:'terrain',  # 高地
+           10:'sky', 
+           11:'person', 
+           12:'rider', 
+           13:'car', 
+           14:'truck', 
+           15:'bus', 
+           16:'train', 
+           17:'motorcycle', 
+           18:'bicycle'}
+
+# DataFrame
+df = pd.DataFrame(columns=['id', 
+                           'lng', 
+                           'lat', 
+                           'heading', 
+                           'road', 
+                           'sidewalk', 
+                           'building', 
+                           'wall', 
+                           'fence', 
+                           'pole', 
+                           'traffic light', 
+                           'traffic sign', 
+                           'vegetation', 
+                           'terrain', 
+                           'sky', 
+                           'person', 
+                           'rider', 
+                           'car', 
+                           'truck', 
+                           'bus', 
+                           'train', 
+                           'motorcycle', 
+                           'bicycle'])
+################################################################################################################################
+def img_seg(img, model) :
+
+    img = image.imread(img)
+    img = test_transform(img, ctx=ctx)  # 1x3x630x630
+    output = model.predict(img)  # 1x19x630x630
+    predict = mx.nd.squeeze(mx.nd.argmax(output, 1)).asnumpy()  # 630x630
+
+    pred = []
+    for i in range(19) :
+        # (predict==i)==array
+        # (predict[predict==i])==vector
+        pred.append(( len(predict[predict==i]) / (predict.shape[0]*predict.shape[1]) ))
+    pred = pd.Series(pred).rename(col_map)
+
+    final_result = [0]*4
+    final_result[0] = pred['road'] + pred['sidewalk'] + pred['terrain']  # ground
+    final_result[1] = pred['building'] + pred['wall'] + pred['fence']  # architecture
+    final_result[2] = pred['sky']  # sky
+    final_result[3] = pred['vegetation']  # plants
+    final_result = final_result/sum(final_result)
+
+    return pred, final_result
+################################################################################################################################
+ctx = mx.cpu()
+model = gluoncv.model_zoo.get_model('psp_resnet101_citys', ctx=ctx, pretrained=True)
+################################################################################################################################
+pred_test, result_test = img_seg(r'1.jpg', model)
+print(pred_test)
+print(result_test)
+################################################################################################################################
+file_path = r'images_test'
+file_list = os.listdir(file_path)
+# print(file_list)
+
+result_list = []
+
+for file in file_list :  # 循环遍历所有图片，进行语义分割，并将结果存于pd.DataFrame
+    img = file_path + "/" + file
+    pred, result = img_seg(img, model)
+    print(pred)
+    print(result)
+
+    result_list.append(copy.deepcopy(result))
+
+result_list = np.array(result_list)
+print(result_list)
+################################################################################################################################
+# 创建一个地图对象，指定初始中心坐标和缩放级别
+latitude = 41.8781
+longitude = -87.6298
+m = folium.Map(location=[latitude, longitude], zoom_start=13)
+
+# 生成一些随机数据
+data = (np.random.normal(size=(100, 3)) * 
+        np.array([[1, 1, 1]]) + 
+        np.array([[48, 5, 1]])).tolist()
+
+# 用热力图绘制数据
+HeatMap(data).add_to(m)
+
+# 显示地图
+m
+################################################################################################################################
+
