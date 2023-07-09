@@ -154,7 +154,7 @@ python /home/zhfc/anaconda3/envs/deeplabv3/deeplabv3/evaluation/eval_on_val_for_
     /root/deeplabv3      /home/zhfc/anaconda3/envs/deeplabv3/deeplabv3
     if __name__ == "__main__":
     /training_logs/model_1/checkpoints/model_1_epoch_1000.pth
-    
+
     cd /home/zhfc/anaconda3/envs/deeplabv3/deeplabv3
     git clone https://github.com/mcordts/cityscapesScripts.git
     cd cityscapesScripts
