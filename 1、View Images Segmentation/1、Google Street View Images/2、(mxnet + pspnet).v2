@@ -1,0 +1,342 @@
+################################################################################################################################
+# ! conda install python=3.8
+
+# ! pip install mxnet==1.9.1
+# ! pip install gluoncv (==0.10.5.post0)
+# ! pip install numpy==1.20.0
+# ! pip install pandas==1.4.4
+# ! pip install folium
+# ! pip install geopandas
+# ! pip install shapely==1.8.5
+################################################################################################################################
+import mxnet as mx
+from mxnet import image, gpu
+
+import gluoncv
+from gluoncv.data.transforms.presets.segmentation import test_transform
+from gluoncv.utils.viz import get_color_pallete, plot_image
+
+import copy
+import folium
+from folium.plugins import HeatMap
+import geopandas as gpd
+import glob
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+from matplotlib import colors
+from matplotlib.patches import Polygon
+import numpy as np
+import os
+import pandas as pd
+import pickle
+import shapely
+
+import warnings
+warnings.filterwarnings(action='once')
+warnings.filterwarnings("ignore")
+################################################################################################################################
+# 定义CityScapes数据集的分割标签字典
+col_map = {0:'road', 
+           1:'sidewalk', 
+           2:'building', 
+           3:'wall', 
+           4:'fence', 
+           5:'pole',  # 杆
+           6:'traffic light', 
+           7:'traffic sign', 
+           8:'vegetation',  # 植被
+           9:'terrain',  # 高地
+           10:'sky', 
+           11:'person', 
+           12:'rider', 
+           13:'car', 
+           14:'truck', 
+           15:'bus', 
+           16:'train', 
+           17:'motorcycle', 
+           18:'bicycle'}
+################################################################################################################################
+def panoid2file(pano_id) :
+
+    images_dir = 'images_test'
+
+    pattern = os.path.join(images_dir, pano_id + '*.jpg')
+
+    matched_files = glob.glob(pattern)
+
+    return matched_files
+################################################################################################################################
+def img_seg(img, model) :
+
+    img = image.imread(img)
+    img = test_transform(img, ctx=ctx)  # 1x3x630x630
+    output = model.predict(img)  # 1x19x630x630
+    predict = mx.nd.squeeze(mx.nd.argmax(output, 1)).asnumpy()  # 630x630
+
+    pred = []
+    for i in range(19) :
+        # (predict==i)==array
+        # (predict[predict==i])==vector
+        pred.append(( len(predict[predict==i]) / (predict.shape[0]*predict.shape[1]) ))
+    pred = pd.Series(pred).rename(col_map)
+
+    final_result = [0]*4
+    final_result[0] = pred['road'] + pred['sidewalk'] + pred['terrain']  # ground
+    final_result[1] = pred['building'] + pred['wall'] + pred['fence']  # architecture
+    final_result[2] = pred['sky']  # sky
+    final_result[3] = pred['vegetation']  # plants
+    final_result = final_result/sum(final_result)
+
+    return pred, final_result
+################################################################################################################################
+with open('chicago_cbg_geo.pkl', 'rb') as f :
+    chicago_cbg_geo = pickle.load(f)
+
+# print(chicago_cbg_geo)
+# print(chicago_cbg_geo['geometry'])
+# print(type(chicago_cbg_geo['geometry']))  # geopandas.geoseries.GeoSeries
+
+for geo in chicago_cbg_geo['geometry'] :
+
+    # print(geo)
+    # print(type(geo))  # shapely.geometry.multipolygon.MultiPolygon
+    for polygon in geo :
+        # print(polygon)
+        # print(type(polygon))  # shapely.geometry.polygon.Polygon
+        break
+
+################################################################################################################################
+with open('GooglePoints.pkl', 'rb') as f :
+    google_sample_gdf = pickle.load(f)
+# print(google_sample_gdf)
+################################################################################################################################
+with open('cbg2sample.pkl', 'rb') as f :
+    matched_points = pickle.load(f)
+# print(matched_points)
+################################################################################################################################
+ctx = mx.cpu()
+model = gluoncv.model_zoo.get_model('psp_resnet101_citys', ctx=ctx, pretrained=True)
+################################################################################################################################
+# cbg/point/img 三重循环
+
+cbg_ground = [0]*len(chicago_cbg_geo)  # 6584
+cbg_architecture = [0]*len(chicago_cbg_geo)  # 6584
+cbg_sky = [0]*len(chicago_cbg_geo)  # 6584
+cbg_plants = [0]*len(chicago_cbg_geo)  # 6584
+
+cbg_img_cnt = 0
+for cbg in range(len(chicago_cbg_geo)) :
+    cbg_img = 0
+
+    point_list = matched_points[cbg]
+    # print(point_list)
+
+    for point in point_list :
+        pano_id = google_sample_gdf.loc[point]['Pano ID']
+
+        matched_files = panoid2file(pano_id)
+        if len(matched_files) != 0 :
+            # print(matched_files)
+
+            for file in matched_files :
+                pred, result = img_seg(file, model)
+
+                cbg_ground[cbg] += result[0]
+                cbg_architecture[cbg] += result[1]
+                cbg_sky[cbg] += result[2]
+                cbg_plants[cbg] += result[3]
+
+                cbg_img += 1
+                cbg_img_cnt += 1
+
+    if cbg_img == 0 :
+        print('no matched img for cbg: ', cbg)
+    else :
+        print('matched num for cbg: ', cbg_img)
+        cbg_ground[cbg] /= cbg_img
+        cbg_architecture[cbg] /= cbg_img
+        cbg_sky[cbg] /= cbg_img
+        cbg_plants[cbg] /= cbg_img
+
+print(cbg_img_cnt)
+# print(cbg_ground)
+# print(cbg_architecture)
+# print(cbg_sky)
+# print(cbg_plants)
+################################################################################################################################
+cbg_geoval_ground = []
+cbg_geoval_architecture = []
+cbg_geoval_sky = []
+cbg_geoval_plants = []
+
+for index, row in chicago_cbg_geo.iterrows() :
+
+    # print(index)
+    # print(row)
+
+    boundary = row['geometry']
+    # print(boundary)
+
+    cbg_geoval_ground.append((boundary, cbg_ground[index]))
+    cbg_geoval_architecture.append((boundary, cbg_architecture[index]))
+    cbg_geoval_sky.append((boundary, cbg_sky[index]))
+    cbg_geoval_plants.append((boundary, cbg_plants[index]))
+
+# print(cbg_geoval_ground)
+# print(cbg_geoval_architecture)
+# print(cbg_geoval_sky)
+# print(cbg_geoval_plants)
+################################################################################################################################
+df_ground = gpd.GeoDataFrame(cbg_geoval_ground, columns=['geometry', 'value'])
+cmap_ground = 'hot'
+fig_ground, ax_ground = plt.subplots(figsize=(10, 10))
+min_ground_value = min(df_ground['value'])
+max_ground_value = max(df_ground['value'])
+################################################################
+for index, row in df_ground.iterrows() :
+
+    # print(index)
+    # print(row)
+
+    boundary = row['geometry']
+    # print(boundary)
+    # print(type(boundary))  # shapely.geometry.multipolygon.MultiPolygon
+
+    value = row['value']
+    # print(value)
+    # print(type(value))
+    normalized_value = (value - min_ground_value) / (max_ground_value - min_ground_value)
+    color = colors.to_hex(plt.get_cmap(cmap_ground)(normalized_value))
+
+    for polygon in boundary :
+        # print(polygon)
+
+        if not polygon.is_empty :
+
+            x, y = polygon.exterior.xy
+            # print(x)
+            # print(y)
+            ax_ground.plot(x, y, linewidth=1, color='black')
+
+            patch = Polygon(list(polygon.exterior.coords), facecolor=color, edgecolor=None, linewidth=0, alpha=0.7)
+            ax_ground.add_patch(patch)
+
+#
+ax_ground.set_title('ground')
+plt.savefig('ground.png')
+################################################################################################################################
+df_architecture = gpd.GeoDataFrame(cbg_geoval_architecture, columns=['geometry', 'value'])
+cmap_architecture = 'hot'
+fig_architecture, ax_architecture = plt.subplots(figsize=(10, 10))
+min_architecture_value = min(df_architecture['value'])
+max_architecture_value = max(df_architecture['value'])
+################################################################
+for index, row in df_architecture.iterrows() :
+
+    # print(index)
+    # print(row)
+
+    boundary = row['geometry']
+    # print(boundary)
+    # print(type(boundary))  # shapely.geometry.multipolygon.MultiPolygon
+
+    value = row['value']
+    # print(value)
+    # print(type(value))
+    normalized_value = (value - min_architecture_value) / (max_architecture_value - min_architecture_value)
+    color = colors.to_hex(plt.get_cmap(cmap_architecture)(normalized_value))
+
+    for polygon in boundary :
+        # print(polygon)
+
+        if not polygon.is_empty :
+
+            x, y = polygon.exterior.xy
+            # print(x)
+            # print(y)
+            ax_architecture.plot(x, y, linewidth=1, color='black')
+
+            patch = Polygon(list(polygon.exterior.coords), facecolor=color, edgecolor=None, linewidth=0, alpha=0.7)
+            ax_architecture.add_patch(patch)
+
+#
+ax_architecture.set_title('architecture')
+plt.savefig('architecture.png')
+################################################################################################################################
+df_sky = gpd.GeoDataFrame(cbg_geoval_sky, columns=['geometry', 'value'])
+cmap_sky = 'hot'
+fig_sky, ax_sky = plt.subplots(figsize=(10, 10))
+min_sky_value = min(df_sky['value'])
+max_sky_value = max(df_sky['value'])
+################################################################
+for index, row in df_sky.iterrows() :
+
+    # print(index)
+    # print(row)
+
+    boundary = row['geometry']
+    # print(boundary)
+    # print(type(boundary))  # shapely.geometry.multipolygon.MultiPolygon
+
+    value = row['value']
+    # print(value)
+    # print(type(value))
+    normalized_value = (value - min_sky_value) / (max_sky_value - min_sky_value)
+    color = colors.to_hex(plt.get_cmap(cmap_sky)(normalized_value))
+
+    for polygon in boundary :
+        # print(polygon)
+
+        if not polygon.is_empty :
+
+            x, y = polygon.exterior.xy
+            # print(x)
+            # print(y)
+            ax_sky.plot(x, y, linewidth=1, color='black')
+
+            patch = Polygon(list(polygon.exterior.coords), facecolor=color, edgecolor=None, linewidth=0, alpha=0.7)
+            ax_sky.add_patch(patch)
+
+#
+ax_sky.set_title('sky')
+plt.savefig('sky.png')
+################################################################################################################################
+df_plants = gpd.GeoDataFrame(cbg_geoval_plants, columns=['geometry', 'value'])
+cmap_plants = 'hot'
+fig_plants, ax_plants = plt.subplots(figsize=(10, 10))
+min_plants_value = min(df_plants['value'])
+max_plants_value = max(df_plants['value'])
+################################################################
+for index, row in df_plants.iterrows() :
+
+    # print(index)
+    # print(row)
+
+    boundary = row['geometry']
+    # print(boundary)
+    # print(type(boundary))  # shapely.geometry.multipolygon.MultiPolygon
+
+    value = row['value']
+    # print(value)
+    # print(type(value))
+    normalized_value = (value - min_plants_value) / (max_plants_value - min_plants_value)
+    color = colors.to_hex(plt.get_cmap(cmap_plants)(normalized_value))
+
+    for polygon in boundary :
+        # print(polygon)
+
+        if not polygon.is_empty :
+
+            x, y = polygon.exterior.xy
+            # print(x)
+            # print(y)
+            ax_plants.plot(x, y, linewidth=1, color='black')
+
+            patch = Polygon(list(polygon.exterior.coords), facecolor=color, edgecolor=None, linewidth=0, alpha=0.7)
+            ax_plants.add_patch(patch)
+
+#
+ax_plants.set_title('plants')
+plt.savefig('plants.png')
+################################################################################################################################
+################################################################################################################################
