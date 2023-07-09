@@ -1,0 +1,53 @@
+################################################################################################################################
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import pickle
+from shapely.geometry import Point, Polygon
+################################################################################################################################
+chicago_cbg_geo = gpd.read_file('Chicago_MSA_CBG.json')
+
+print(chicago_cbg_geo)
+# 6584 rows x 10 columns
+################################################################################################################################
+read_df = pd.read_csv('gsv_meta.csv', na_values="Nan")
+# print(read_df)
+# 107263 rows x 5 columns
+# No. + Pano ID + Location + Heading + Date
+
+# reshape
+filt_df = read_df.dropna(how='any')
+filt_df = filt_df.reset_index(drop=True)
+filt_df = filt_df.drop(columns=['Unnamed: 0'])
+filt_df['Location'] = filt_df['Location'].apply(lambda x: Point(float(x.split(',')[1]), float(x.split(',')[0])))
+
+google_sample_gdf = gpd.GeoDataFrame(filt_df, geometry='Location')
+
+print(google_sample_gdf)
+# 79735 rows x 4 columns
+# 227622 pictures
+################################################################################################################################
+# 6584 []s
+matched_points = [ [] for indx in range(len(chicago_cbg_geo)) ]
+
+# 79735 points
+sample_points = gpd.GeoSeries(google_sample_gdf.loc[:, 'Location'])
+
+# 
+for indy in range(len(chicago_cbg_geo)) :
+    sel_polygon = chicago_cbg_geo.loc[indy, 'geometry']
+
+    match_result = sample_points.within(sel_polygon)  # vector
+
+    # Points in CBG
+    if match_result.any() :
+        for indz in np.where(match_result==True)[0] :
+            matched_points[indy].append(indz)
+
+print(matched_points)
+################################################################################################################################
+f = open('cbg2sample', 'wb')
+pickle.dump(matched_points, f)
+f.close()
+################################################################################################################################
+
